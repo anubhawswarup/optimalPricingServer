@@ -14,6 +14,7 @@ module Api::V1
 
       @result = Rails.cache.fetch(cache_key, expires_in: 5.minutes, skip_nil: true) do
         was_cached = false
+        send_alert("CACHE_MISS", "Fetching rate for #{cache_key}")
         Rails.logger.info("[PricingService] CACHE MISS key=#{cache_key}")
 
         retries = 0
@@ -48,6 +49,7 @@ module Api::V1
             Rails.logger.warn("[PricingService] API connection failed. Retrying... (Attempt #{retries})")
             retry
           end
+          send_alert("API_ERROR", "Failed to fetch rate for #{cache_key}: #{e.message}")
           Rails.logger.error("[PricingService] RATE API EXCEPTION key=#{cache_key} error=#{e.message}")
           errors << "Pricing Service unavailable. Please retry later for the latest prices."
           next nil
@@ -55,6 +57,7 @@ module Api::V1
       end
 
       if was_cached && @result
+        send_alert("CACHE_HIT", "Served from cache for #{cache_key}")
         Rails.logger.info("[PricingService] CACHE HIT key=#{cache_key}")
       end
 
@@ -64,6 +67,11 @@ module Api::V1
     end
 
     private
+
+    def send_alert(type, message)
+      # Placeholder for external alerting/monitoring (e.g., Sentry, Datadog, Slack)
+      Rails.logger.warn("[ALERT] [#{type}] #{message}")
+    end
 
     def log_all_redis_keys
       unless Rails.cache.respond_to?(:redis)
