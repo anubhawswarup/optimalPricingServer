@@ -1,4 +1,11 @@
 services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   rate-api:
     image: tripladev/rate-api
     ports:
@@ -12,5 +19,10 @@ services:
       - .:/rails
     environment:
       - RATE_API_URL=http://rate-api:8080
+      - REDIS_URL=redis://redis:6379/1
     depends_on:
       - rate-api
+      - redis
+
+volumes:
+  redis_data:
