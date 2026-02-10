@@ -1,3 +1,5 @@
+require 'timeout'
+
 module Api::V1
   class PricingService < BaseService
     def initialize(period:, hotel:, room:)
@@ -13,29 +15,42 @@ module Api::V1
       @result = Rails.cache.fetch(cache_key, expires_in: 5.minutes, skip_nil: true) do
         was_cached = false
         Rails.logger.info("[PricingService] CACHE MISS key=#{cache_key}")
-        rate = RateApiClient.get_rate(
-          period: @period,
-          hotel: @hotel,
-          room: @room
-        )
 
-        if rate.success?
+        retries = 0
+        begin
+          rate = Timeout.timeout(5) do
+            RateApiClient.get_rate(
+              period: @period,
+              hotel: @hotel,
+              room: @room
+            )
+          end
+
+          unless rate.success?
+            raise StandardError, "API Error: #{rate.body}"
+          end
+
+          Rails.logger.info("[PricingService] API RESPONSE: #{rate.body}")
           parsed_rate = JSON.parse(rate.body)
-          value = parsed_rate['rates']
+          value = Array(parsed_rate['rates'])
             .detect { |r| r['period'] == @period && r['hotel'] == @hotel && r['room'] == @room }
             &.dig('rate')
 
-          if value
-            Rails.logger.info("[PricingService] WRITING TO CACHE key=#{cache_key} value=#{value}")
+          unless value
+            raise StandardError, "Rate missing in API response"
           end
 
+          Rails.logger.info("[PricingService] WRITING TO CACHE key=#{cache_key} value=#{value}")
           value
-        else
-          Rails.logger.error(
-            "[PricingService] RATE API FAILURE key=#{cache_key} error=#{rate.body}"
-          )
-          errors << rate.body['error']
-          nil
+        rescue StandardError => e
+          if retries < 1
+            retries += 1
+            Rails.logger.warn("[PricingService] API connection failed. Retrying... (Attempt #{retries})")
+            retry
+          end
+          Rails.logger.error("[PricingService] RATE API EXCEPTION key=#{cache_key} error=#{e.message}")
+          errors << "Pricing Service unavailable. Please retry later for the latest prices."
+          next nil
         end
       end
 
