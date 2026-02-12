@@ -61,7 +61,7 @@ module Api::V1
         Rails.logger.info("[PricingService] CACHE HIT key=#{cache_key}")
       end
 
-      log_all_redis_keys
+      #log_all_redis_keys
 
       @result
     end

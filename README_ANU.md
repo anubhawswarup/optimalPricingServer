@@ -25,3 +25,32 @@ To optimize performance and reduce latency, we have introduced a caching layer u
 ### Redis Key Logging
 
 For debugging and monitoring purposes, the service includes a method (`log_all_redis_keys`) that logs all keys currently stored in the Redis cache. This helps in understanding the cache's state at any given time.
+
+## Design Decisions & Thought Process
+
+### Cache Hit Case
+We chose to serve data directly from Redis with a strict 5-minute TTL (Time To Live). This decision aligns perfectly with the business rule that rates are valid for 5 minutes. It prioritizes low latency and reduces costs by completely bypassing the expensive inference model for repeated requests.
+
+### Cache Miss Case
+On a cache miss, we employ a synchronous "read-through" strategy: fetch from the API, write to cache, and return. We chose this over background population to ensure the user always gets the most up-to-date price immediately, accepting the one-time latency penalty for the first requestor.
+
+### Graceful Degradation (Rate API Down)
+If the upstream Pricing Model API is down or timing out, our service catches the exception after a single retry. Instead of crashing or hanging, we return a structured error message. This ensures our proxy remains stable even when the dependent service is failing. This also ensures data is being still served for keys which are a cache hit.
+
+### Graceful Degradation (Redis Down)
+In the event of a Redis failure, the system falls back to treating every request as a cache miss. Traffic will flow directly to the Rate API. While this increases latency and cost, it ensures the service remains available to users rather than failing completely due to a cache outage. Alerts can be raised accordingly.
+
+### Circuit Breaker (Future Addition)
+Adding a circuit breaker (e.g., `semian` or `stoplight`) around the `RateApiClient` would be highly beneficial. It would prevent cascading failures by stopping requests to the API if it starts failing consistently, allowing the upstream system time to recover and failing fast for our users.
+In the case where the API model is down, a circuit breaker facilitates graceful degradation by immediately returning a fallback (or error) instead of waiting for timeouts. This preserves thread pool capacity, ensuring the service remains responsive for other requests (like cache hits) despite the dependency failure.
+
+### Future Enhancements
+We could implement "stale-while-revalidate" to serve slightly stale data while fetching fresh rates in the background, further reducing latency. Additionally, adding comprehensive metrics (e.g., Datadog/Prometheus) for cache hit ratios would help in fine-tuning our TTL and timeout settings.
+
+### Future Enhancements (At Scale)
+To handle higher loads, we would need to implement "jitter" in our cache expiration times to prevent "thundering herd" issues. We would also consider sharding the Redis instance or using Redis Cluster to distribute memory pressure and handle higher throughput. For highly popular search parameters, we could implement asynchronous prewarming where a background job refreshes the cache just before the 5-minute TTL expires. We would prefer this strategy if the Rate API latency increases significantly or if specific "hot" keys cause noticeable slowdowns for users during cache misses. This avoids the latency penalty for the unlucky user who hits the expired key.
+
+
+### Key Architectural Choices
+*   **Redis vs. In-Memory**: We chose Redis to allow the cache to persist across application restarts and to be shared if we scale the web service horizontally.
+*   **Retry Logic**: We opted for a simple retry mechanism (1 retry) rather than complex exponential backoff for this iteration, as the 5-minute validity window suggests we should fail fast and let the user try again later if the system is struggling. Exponential wait times cumulate to multiple of seconds which doesnt sit well for a booking system user. 
