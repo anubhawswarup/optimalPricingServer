@@ -25,6 +25,9 @@ To optimize performance and reduce latency, we have introduced a caching layer u
 
 ## Design Decisions & Thought Process
 
+*   **Redis vs. In-Memory**: We chose Redis to allow the cache to persist across application restarts and to be shared if we scale the web service horizontally.
+*   **Retry Logic**: We opted for a simple retry mechanism (1 retry) rather than complex exponential backoff for this iteration, as the 5-minute validity window suggests we should fail fast and let the user try again later if the system is struggling. Exponential wait times cumulate to multiple of seconds which doesnt sit well for a booking system user. 
+
 ### Cache Hit Case
 We chose to serve data directly from Redis with a strict 5-minute TTL (Time To Live). This decision aligns perfectly with the business rule that rates are valid for 5 minutes. It prioritizes low latency and reduces costs by completely bypassing the expensive inference model for repeated requests.
 
@@ -46,8 +49,3 @@ We could implement "stale-while-revalidate" to serve slightly stale data while f
 
 ### Future Enhancements (At Scale)
 To handle higher loads, we would need to implement "jitter" in our cache expiration times to prevent "thundering herd" issues. We would also consider sharding the Redis instance or using Redis Cluster to distribute memory pressure and handle higher throughput. For highly popular search parameters, we could implement asynchronous prewarming where a background job refreshes the cache just before the 5-minute TTL expires. We would prefer this strategy if the Rate API latency increases significantly or if specific "hot" keys cause noticeable slowdowns for users during cache misses. This avoids the latency penalty for the unlucky user who hits the expired key.
-
-
-### Key Architectural Choices
-*   **Redis vs. In-Memory**: We chose Redis to allow the cache to persist across application restarts and to be shared if we scale the web service horizontally.
-*   **Retry Logic**: We opted for a simple retry mechanism (1 retry) rather than complex exponential backoff for this iteration, as the 5-minute validity window suggests we should fail fast and let the user try again later if the system is struggling. Exponential wait times cumulate to multiple of seconds which doesnt sit well for a booking system user. 
