@@ -1,82 +1,56 @@
-<div align="center">
-   <img src="/img/logo.svg?raw=true" width=600 style="background-color:white;">
-</div>
+# Optimal Pricing Server
+# optimalPricingServer
+This server caches prices for upto 5 mins to reduce the pressure on the model runs thereby maximising savings for the cost of maintenance.
+This document outlines the recent additions to the Optimal Pricing Server, specifically focusing on the implementation of Redis caching for the pricing service.
 
-# Backend Engineering Take-Home Assignment: Dynamic Pricing Proxy
+## Caching Logic for Ratings API
 
-Welcome to the Tripla backend engineering take-home assignment\! 🧑‍💻 This exercise is designed to simulate a real-world problem you might encounter as part of our team.
+To optimize performance and reduce latency, we have introduced a caching layer using Redis before making calls to the external Ratings API. This mechanism helps us serve pricing information faster and minimizes redundant API requests.
 
-⚠️ **Before you begin**, please review the main [FAQ](/README.md#frequently-asked-questions). It contains important information, **including our specific guidelines on how to submit your solution.**
+### Workflow
 
-## The Challenge
+1.  **Cache Key Generation**: For each pricing request, a unique cache key is generated using the `hotel`, `room`, and `period` parameters. The format of the key is `rate:<hotel>:<room>:<period>`.
 
-At Tripla, we use a dynamic pricing model for hotel rooms. Instead of static, unchanging rates, our model uses a real-time algorithm to adjust prices based on market demand and other data signals. This helps us maximize both revenue and occupancy.
+2.  **Cache Lookup**: Before making a call to the `RateApiClient`, the system first checks if a valid entry exists in the Redis cache for the generated key.
 
-Our Data and AI team built a powerful model to handle this, but its inference process is computationally expensive to run. To make this product more cost-effective, we analyzed the model's output and found that a calculated room rate remains effective for up to 5 minutes.
+3.  **Cache Hit**: If a cached value is found (a "cache hit"), the pricing information is retrieved directly from Redis and returned to the client. This avoids the need for an external API call. The log will show a `CACHE HIT` message.
 
-This insight presents a great optimization opportunity, and that's where you come in.
+4.  **Cache Miss**: If no cached value is found (a "cache miss"), the system proceeds to call the `RateApiClient` to fetch the current rate.
+    - Upon a successful API response, the retrieved rate is stored in the Redis cache with an expiration time of 5 minutes.
+    - The fresh rate is then returned to the client.
+    - The log will show a `CACHE MISS` message, followed by a `WRITING TO CACHE` message.
 
-## Your Mission
+5.  **Error Handling**: If the `RateApiClient` call fails, an error is logged, and no value is written to the cache.
 
-Your mission is to build an efficient service that acts as an intermediary to our dynamic pricing model. This service will be responsible for providing rates to our users while respecting the operational constraints of the expensive model behind it.
+### Redis Key Logging
 
-You will start with a Ruby on Rails application that is already integrated with our dynamic pricing model. However, the current implementation fetches a new rate for every single request. Your mission is to ensure this service handles the pricing models' constraints.
+For debugging and monitoring purposes, the service includes a method (`log_all_redis_keys`) that logs all keys currently stored in the Redis cache. This helps in understanding the cache's state at any given time.
 
-## Core Requirements
+## Design Decisions & Thought Process
 
-1. Review the pricing model's API and its constraints. The model's docker image and documentation are hosted on dockerhub:  [tripladev/rate-api](https://hub.docker.com/r/tripladev/rate-api).
+### Cache Hit Case
+We chose to serve data directly from Redis with a strict 5-minute TTL (Time To Live). This decision aligns perfectly with the business rule that rates are valid for 5 minutes. It prioritizes low latency and reduces costs by completely bypassing the expensive inference model for repeated requests.
 
-2. Ensure rate validity. A rate fetched from the pricing model is considered valid for 5 minutes. Your service must ensure that any rate it provides for a given set of parameters (`period`, `hotel`, `room`) is no older than this 5-minute window.
+### Cache Miss Case
+On a cache miss, we employ a synchronous "read-through" strategy: fetch from the API, write to cache, and return. We chose this over background population to ensure the user always gets the most up-to-date price immediately, accepting the one-time latency penalty for the first requestor.
 
-3. Honor throughput requirements. Your solution must be able to handle at least 10,000 requests per day from our users while using a single API token.
+### Graceful Degradation (Rate API Down)
+If the upstream Pricing Model API is down or timing out, our service catches the exception after a single retry. Instead of crashing or hanging, we return a structured error message. This ensures our proxy remains stable even when the dependent service is failing. This also ensures data is being still served for keys which are a cache hit.
 
-## How We'll Evaluate Your Work
+### Graceful Degradation (Redis Down)
+In the event of a Redis failure, the system falls back to treating every request as a cache miss. Traffic will flow directly to the Rate API. While this increases latency and cost, it ensures the service remains available to users rather than failing completely due to a cache outage. Alerts can be raised accordingly.
 
-This isn't just about getting the right answer. We're excited to see how you approach the problem. Treat this as you would a production-ready feature.
+### Circuit Breaker (Future Addition)
+Adding a circuit breaker (e.g., `semian` or `stoplight`) around the `RateApiClient` would be highly beneficial. It would prevent cascading failures by stopping requests to the API if it starts failing consistently, allowing the upstream system time to recover and failing fast for our users.
+In the case where the API model is down, a circuit breaker facilitates graceful degradation by immediately returning a fallback (or error) instead of waiting for timeouts. This preserves thread pool capacity, ensuring the service remains responsive for other requests (like cache hits) despite the dependency failure.
 
-  * We'll be looking for clean, well-structured, and testable code. Feel free to add dependencies or refactor the existing scaffold as you see fit.
-  * How do you decide on your approach to meeting the performance and cost requirements? Documenting your thought process is a great way to share this.
-  * A reliable service anticipates failure. How does your service behave if the pricing model is slow, or returns an error? Providing descriptive error messages to the end-user is a key part of a robust API.
-  * We want to see how you work around constraints and navigate an existing codebase to deliver a solution.
+### Future Enhancements
+We could implement "stale-while-revalidate" to serve slightly stale data while fetching fresh rates in the background, further reducing latency. Additionally, adding comprehensive metrics (e.g., Datadog/Prometheus) for cache hit ratios would help in fine-tuning our TTL and timeout settings.
 
-
-## Minimum Deliverables
-
-1.  A link to your Git repository containing the complete solution.
-2.  Clear instructions in the `README.md` on how to build, test, and run your service.
-
-We highly value seeing your thought process. A great submission will also include documentation (e.g., in the `README.md`) discussing the design choices you made. Consider outlining different approaches you considered, their potential tradeoffs, and a clear rationale for why you chose your final solution.
-
-## Development Environment Setup
-
-The project scaffold is a minimal Ruby on Rails application with a `/api/v1/pricing` endpoint. While you're free to configure your environment as you wish, this repository is pre-configured for a Docker-based workflow that supports live reloading for your convenience.
-
-The provided `Dockerfile` builds a container with all necessary dependencies. Your local code is mounted directly into the container, so any changes you make on your machine will be reflected immediately. Your application will need to communicate with the external pricing model, which also runs in its own Docker container.
-
-### Quick Start Guide
-
-Here is a list of common commands for building, running, and interacting with the Dockerized environment.
-
-```bash
-
-# --- 1. Build & Run The Main Application ---
-# Build and run the Docker compose
-docker compose up -d --build
-
-# --- 2. Test The Endpoint ---
-# Send a sample request to your running service
-curl 'http://localhost:3000/api/v1/pricing?period=Summer&hotel=FloatingPointResort&room=SingletonRoom'
-
-# --- 3. Run Tests ---
-# Run the full test suite
-docker compose exec interview-dev ./bin/rails test
-
-# Run a specific test file
-docker compose exec interview-dev ./bin/rails test test/controllers/pricing_controller_test.rb
-
-# Run a specific test by name
-docker compose exec interview-dev ./bin/rails test test/controllers/pricing_controller_test.rb -n test_should_get_pricing_with_all_parameters
-```
+### Future Enhancements (At Scale)
+To handle higher loads, we would need to implement "jitter" in our cache expiration times to prevent "thundering herd" issues. We would also consider sharding the Redis instance or using Redis Cluster to distribute memory pressure and handle higher throughput. For highly popular search parameters, we could implement asynchronous prewarming where a background job refreshes the cache just before the 5-minute TTL expires. We would prefer this strategy if the Rate API latency increases significantly or if specific "hot" keys cause noticeable slowdowns for users during cache misses. This avoids the latency penalty for the unlucky user who hits the expired key.
 
 
-Good luck, and we look forward to seeing what you build\!
+### Key Architectural Choices
+*   **Redis vs. In-Memory**: We chose Redis to allow the cache to persist across application restarts and to be shared if we scale the web service horizontally.
+*   **Retry Logic**: We opted for a simple retry mechanism (1 retry) rather than complex exponential backoff for this iteration, as the 5-minute validity window suggests we should fail fast and let the user try again later if the system is struggling. Exponential wait times cumulate to multiple of seconds which doesnt sit well for a booking system user. 
