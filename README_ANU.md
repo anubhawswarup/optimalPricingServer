@@ -22,9 +22,6 @@ To optimize performance and reduce latency, we have introduced a caching layer u
 
 5.  **Error Handling**: If the `RateApiClient` call fails, an error is logged, and no value is written to the cache.
 
-### Redis Key Logging
-
-For debugging and monitoring purposes, the service includes a method (`log_all_redis_keys`) that logs all keys currently stored in the Redis cache. This helps in understanding the cache's state at any given time.
 
 ## Design Decisions & Thought Process
 
