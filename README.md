@@ -8,6 +8,30 @@ This document outlines the recent additions to the Optimal Pricing Server, speci
 To optimize performance and reduce latency, we have introduced a caching layer using Redis before making calls to the external Ratings API. This mechanism helps us serve pricing information faster and minimizes redundant API requests.
 
 ### Workflow
+5.  **Error Handling**: If the `RateApiClient` call fails, an error is logged, and no value is written to the cache.
+
+### Visual Flow
+
+```mermaid
+flowchart TD
+    Start([Request Pricing]) --> CheckCache{Check Redis Cache}
+    
+    CheckCache -- Hit --> ReturnCached([Return Cached Rate])
+    CheckCache -- Miss --> CallAPI[Call Rate API]
+    CheckCache -- Redis Error --> LogRedisError[Log Error] --> CallAPI
+    
+    CallAPI --> APISuccess{API Success?}
+    
+    APISuccess -- Yes --> WriteCache[Write to Redis if Up] --> ReturnFresh([Return Fresh Rate])
+    
+    APISuccess -- No --> RetryCheck{Retry < 1?}
+    RetryCheck -- Yes --> CallAPI
+    RetryCheck -- No --> ReturnError([Return Error])
+```
+
+
+## Design Decisions & Thought Process
+
 
 1.  **Cache Key Generation**: For each pricing request, a unique cache key is generated using the `hotel`, `room`, and `period` parameters. The format of the key is `rate:<hotel>:<room>:<period>`.
 
