@@ -55,5 +55,19 @@ module Api::V1
       assert_nil result
       assert_includes @service.errors, "Pricing Service unavailable. Please retry later for the latest prices."
     end
+
+    test "should fallback to API if Redis is down" do
+      # Simulate Redis failure
+      Rails.cache.expects(:fetch).raises(StandardError, "Redis down")
+
+      # Expect API call to succeed despite cache error
+      api_response = mock
+      api_response.stubs(:success?).returns(true)
+      api_response.stubs(:body).returns({ rates: [{ period: @period, hotel: @hotel, room: @room, rate: 200.0 }] }.to_json)
+      RateApiClient.expects(:get_rate).once.returns(api_response)
+
+      result = @service.run
+      assert_equal 200.0, result
+    end
   end
 end
