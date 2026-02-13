@@ -17,6 +17,7 @@ require "action_cable/engine"
 # Require the gems listed in Gemfile, including any gems
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
+require "prometheus_exporter/middleware"
 
 module Interview
   class Application < Rails::Application
@@ -40,5 +41,8 @@ module Interview
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # Enable Prometheus Exporter middleware to capture request metrics
+    config.middleware.use PrometheusExporter::Middleware
   end
 end

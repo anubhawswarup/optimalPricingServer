@@ -20,9 +20,30 @@ services:
     environment:
       - RATE_API_URL=http://rate-api:8080
       - REDIS_URL=redis://redis:6379/1
+      - PROMETHEUS_EXPORTER_HOST=prometheus_exporter
     depends_on:
       - rate-api
       - redis
+      - prometheus_exporter
+
+  # The collector process (part of the prometheus_exporter gem)
+  prometheus_exporter:
+    # Use the same image as your rails app to ensure gems are available
+    build: . 
+    command: bundle exec prometheus_exporter --bind 0.0.0.0 --port 9394
+    ports:
+      - "9394:9394"
+
+  # The Prometheus server
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - prometheus_exporter
+
 
 volumes:
   redis_data:
