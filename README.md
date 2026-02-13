@@ -7,9 +7,7 @@ This document outlines the recent additions to the Optimal Pricing Server, speci
 
 To optimize performance and reduce latency, we have introduced a caching layer using Redis before making calls to the external Ratings API. This mechanism helps us serve pricing information faster and minimizes redundant API requests.
 
-### Workflow
-5.  **Error Handling**: If the `RateApiClient` call fails, an error is logged, and no value is written to the cache.
-
+## Workflow
 ### Visual Flow
 
 ```mermaid
@@ -45,7 +43,6 @@ flowchart TD
     - The log will show a `CACHE MISS` message, followed by a `WRITING TO CACHE` message.
 
 5.  **Error Handling**: If the `RateApiClient` call fails, an error is logged, and no value is written to the cache.
-
 
 
 ## Design Decisions & Thought Process
